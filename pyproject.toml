@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "hmcts-fastapi-azure-auth"
-version = "0.1.0"
+version = "0.2.0"
 description = "FastAPI Azure AD authentication and RBAC library for HMCTS applications"
 readme = "README.md"
 requires-python = ">=3.11"

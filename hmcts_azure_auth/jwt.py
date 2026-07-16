@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+import functools
 import logging
 from typing import Any
 
@@ -67,21 +69,29 @@ class JWTVerificationService:
             return None
 
         try:
-            signing_key = self.jwks_client.get_signing_key_from_jwt(token)
-            decoded = jwt.decode(
-                token,
-                signing_key.key,
-                algorithms=["RS256"],
-                audience=self.client_id,
-                issuer=f"https://login.microsoftonline.com/{self.tenant_id}/v2.0",
-                options={
-                    "verify_signature": True,
-                    "verify_aud": True,
-                    "verify_iss": True,
-                    "verify_exp": True,
-                    "verify_nbf": True,
-                    "verify_iat": True,
-                },
+            loop = asyncio.get_running_loop()
+            signing_key = await loop.run_in_executor(
+                None, self.jwks_client.get_signing_key_from_jwt, token
+            )
+            _client_id = self.client_id
+            _tenant_id = self.tenant_id
+            decoded = await loop.run_in_executor(
+                None,
+                lambda: jwt.decode(
+                    token,
+                    signing_key.key,
+                    algorithms=["RS256"],
+                    audience=_client_id,
+                    issuer=f"https://login.microsoftonline.com/{_tenant_id}/v2.0",
+                    options={
+                        "verify_signature": True,
+                        "verify_aud": True,
+                        "verify_iss": True,
+                        "verify_exp": True,
+                        "verify_nbf": True,
+                        "verify_iat": True,
+                    },
+                ),
             )
         except jwt.ExpiredSignatureError as exc:
             logger.warning("JWT token has expired")
@@ -127,5 +137,12 @@ class JWTVerificationService:
         }
 
 
-# Module-level singleton — initialised once on first import of this module.
-jwt_verification_service = JWTVerificationService()
+@functools.cache
+def get_jwt_service() -> JWTVerificationService:
+    """Return the process-wide JWTVerificationService, created on first call.
+
+    Lazy initialisation ensures environment variables are read after injection
+    (e.g. in test fixtures or serverless cold-start scenarios) rather than at
+    module import time.
+    """
+    return JWTVerificationService()

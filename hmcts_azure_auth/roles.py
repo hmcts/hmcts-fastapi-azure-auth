@@ -60,6 +60,42 @@ def get_valid_roles() -> dict[str, str]:
     return roles
 
 
+def validate_approles_config() -> None:
+    """Raise ValueError if AUTH_APPROLES is set but contains invalid configuration.
+
+    Call from the application lifespan startup handler so misconfiguration is
+    caught immediately at boot rather than silently falling back to defaults.
+    Has no effect when AUTH_APPROLES is unset (defaults are used without error).
+    """
+    from hmcts_azure_auth.models import get_auth_settings
+
+    settings = get_auth_settings()
+    if not settings.AUTH_APPROLES:
+        return
+
+    try:
+        roles = json.loads(settings.AUTH_APPROLES)
+    except json.JSONDecodeError as exc:
+        raise ValueError(
+            f"AUTH_APPROLES is not valid JSON — fix or unset it. Error: {exc}"
+        ) from exc
+
+    if not isinstance(roles, dict):
+        raise ValueError(
+            "AUTH_APPROLES must be a JSON object mapping role names to role values."
+        )
+
+    missing = [k for k in DEFAULT_APP_ROLES if k not in roles]
+    if missing:
+        raise ValueError(
+            f"AUTH_APPROLES is missing required role keys: {missing}. "
+            f"Expected at minimum: {list(DEFAULT_APP_ROLES.keys())}"
+        )
+
+    if not all(isinstance(v, str) for v in roles.values()):
+        raise ValueError("AUTH_APPROLES values must all be strings.")
+
+
 def has_any_role(user_roles: list[str]) -> bool:
     """Return True if the user holds at least one valid app role."""
     return bool(set(user_roles) & set(get_valid_roles().values()))

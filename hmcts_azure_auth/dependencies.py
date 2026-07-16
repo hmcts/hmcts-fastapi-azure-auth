@@ -11,7 +11,7 @@ from fastapi import Depends, Header, HTTPException, Request
 
 from hmcts_azure_auth.audit import AuditEvent, AuditEventType, AuditWriter
 from hmcts_azure_auth.easy_auth import parse_easy_auth_header
-from hmcts_azure_auth.jwt import jwt_verification_service
+from hmcts_azure_auth.jwt import get_jwt_service
 from hmcts_azure_auth.models import AuthUser
 from hmcts_azure_auth.roles import get_valid_roles
 from hmcts_azure_auth.utils import emails_match, sanitize_for_log
@@ -25,7 +25,7 @@ _LOCAL_DEV_EMAIL = "developer@localhost.com"
 
 
 def _is_local_dev() -> bool:
-    return os.getenv("ENVIRONMENT", "local").lower() == "local"
+    return os.getenv("ENVIRONMENT", "production").lower() == "local"
 
 
 def _local_dev_roles() -> list[str]:
@@ -71,9 +71,9 @@ async def get_current_user_base(
     if authorization and authorization.startswith("Bearer "):
         token = authorization[7:]
         try:
-            decoded = await jwt_verification_service.verify_jwt_token(token)
+            decoded = await get_jwt_service().verify_jwt_token(token)
             if decoded:
-                jwt_info = jwt_verification_service.extract_user_info_from_jwt(decoded)
+                jwt_info = get_jwt_service().extract_user_info_from_jwt(decoded)
                 jwt_oid: str = jwt_info["azure_user_id"]
                 jwt_email: str = jwt_info["email"]
                 roles = jwt_info["roles"]
@@ -85,7 +85,7 @@ async def get_current_user_base(
                         sanitize_for_log(azure_user_id),
                         sanitize_for_log(jwt_oid),
                     )
-                    if jwt_verification_service.strict_mode:
+                    if get_jwt_service().strict_mode:
                         raise HTTPException(
                             status_code=401,
                             detail="Authentication claims mismatch between Easy Auth and JWT",
@@ -109,10 +109,10 @@ async def get_current_user_base(
             raise
         except Exception as exc:
             logger.warning("JWT verification error: %s", exc)
-            if jwt_verification_service.strict_mode:
+            if get_jwt_service().strict_mode:
                 raise
 
-    elif jwt_verification_service.strict_mode:
+    elif get_jwt_service().strict_mode:
         raise HTTPException(
             status_code=401, detail="JWT token required in strict verification mode"
         )
@@ -223,6 +223,12 @@ def get_allowlisted_user(
         async def _maybe_write_audit(required: list[str]) -> None:
             if not audit_writer:
                 return
+            forwarded_for = request.headers.get("X-Forwarded-For")
+            client_ip: str | None = (
+                forwarded_for.split(",")[0].strip()
+                if forwarded_for
+                else (request.client.host if request.client else None)
+            )
             event = AuditEvent(
                 event_type=AuditEventType.ACCESS_DENIED,
                 user_id=sanitize_for_log(
@@ -235,11 +241,12 @@ def get_allowlisted_user(
                 held_roles=safe_roles,
                 required_roles=[sanitize_for_log(r) for r in required],
                 resource=sanitize_for_log(resource),
+                client_ip=client_ip,
             )
             if asyncio.iscoroutinefunction(audit_writer):
                 await audit_writer(event)
             else:
-                audit_writer(event)
+                await asyncio.to_thread(audit_writer, event)
 
         for role in (required_roles_all or []):
             if role not in roles:

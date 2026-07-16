@@ -95,7 +95,7 @@ class TestGetCurrentUserBaseProduction:
         mock_svc.strict_mode = False
         mock_svc.verify_jwt_token = AsyncMock(return_value=None)
 
-        with patch("hmcts_azure_auth.dependencies.jwt_verification_service", mock_svc):
+        with patch("hmcts_azure_auth.dependencies.get_jwt_service", return_value=mock_svc):
             app = self._make_app()
             client = TestClient(app, raise_server_exceptions=False)
             resp = client.get(
@@ -104,6 +104,188 @@ class TestGetCurrentUserBaseProduction:
             )
         assert resp.status_code == 200
         assert resp.json()["email"] == "user@example.com"
+
+
+# ---------------------------------------------------------------------------
+# get_current_user_base — OID and identity cross-check
+# ---------------------------------------------------------------------------
+
+class TestGetCurrentUserBaseOIDValidation:
+    """Tests for the OID / identity cross-check in get_current_user_base.
+
+    These call the dependency directly (not via TestClient) since it is a plain
+    async function — FastAPI header annotations are just type hints at call time.
+    jwt_verification_service is always patched so tests are independent of the
+    module-level singleton state.
+    """
+
+    def _make_jwt_svc(
+        self,
+        *,
+        oid: str = "oid-123",
+        email: str = "user@example.com",
+        roles: list | None = None,
+        strict: bool = True,
+    ) -> MagicMock:
+        svc = MagicMock()
+        svc.enabled = True
+        svc.strict_mode = strict
+        svc.verify_jwt_token = AsyncMock(return_value={"oid": oid})
+        svc.extract_user_info_from_jwt.return_value = {
+            "azure_user_id": oid,
+            "email": email,
+            "name": "Test User",
+            "upn": "",
+            "roles": roles or [],
+        }
+        return svc
+
+    @pytest.mark.asyncio
+    async def test_matching_oids_succeed(self, non_local_env):
+        svc = self._make_jwt_svc(oid="oid-123")
+        with patch("hmcts_azure_auth.dependencies.get_jwt_service", return_value=svc):
+            user = await get_current_user_base(
+                x_ms_client_principal=_easy_auth_header("oid-123"),
+                authorization="Bearer test-token",
+            )
+        assert user.user_id == "oid-123"
+        assert user.email == "user@example.com"
+
+    @pytest.mark.asyncio
+    async def test_oid_mismatch_raises_401_in_strict_mode(self, non_local_env):
+        svc = self._make_jwt_svc(oid="jwt-oid-different", strict=True)
+        with patch("hmcts_azure_auth.dependencies.get_jwt_service", return_value=svc):
+            with pytest.raises(HTTPException) as exc_info:
+                await get_current_user_base(
+                    x_ms_client_principal=_easy_auth_header("easy-auth-oid"),
+                    authorization="Bearer test-token",
+                )
+        assert exc_info.value.status_code == 401
+        assert "mismatch" in exc_info.value.detail.lower()
+
+    @pytest.mark.asyncio
+    async def test_oid_mismatch_allows_through_in_non_strict_mode(self, non_local_env):
+        svc = self._make_jwt_svc(oid="jwt-oid-different", strict=False)
+        with patch("hmcts_azure_auth.dependencies.get_jwt_service", return_value=svc):
+            user = await get_current_user_base(
+                x_ms_client_principal=_easy_auth_header("easy-auth-oid"),
+                authorization="Bearer test-token",
+            )
+        assert user is not None
+
+    @pytest.mark.asyncio
+    async def test_oid_mismatch_logs_error(self, non_local_env):
+        svc = self._make_jwt_svc(oid="jwt-oid-different", strict=False)
+        with patch("hmcts_azure_auth.dependencies.get_jwt_service", return_value=svc):
+            with patch("hmcts_azure_auth.dependencies.logger") as mock_logger:
+                await get_current_user_base(
+                    x_ms_client_principal=_easy_auth_header("easy-auth-oid"),
+                    authorization="Bearer test-token",
+                )
+        mock_logger.error.assert_called_once()
+        log_msg = mock_logger.error.call_args[0][0]
+        assert "mismatch" in log_msg.lower() or "Identity" in log_msg
+
+    @pytest.mark.asyncio
+    async def test_oid_comparison_is_case_insensitive(self, non_local_env):
+        # JWT has uppercase OID, Easy Auth has lowercase — should not trigger mismatch.
+        svc = self._make_jwt_svc(oid="OID-123", strict=True)
+        with patch("hmcts_azure_auth.dependencies.get_jwt_service", return_value=svc):
+            user = await get_current_user_base(
+                x_ms_client_principal=_easy_auth_header("oid-123"),
+                authorization="Bearer test-token",
+            )
+        assert user.user_id.upper() == "OID-123"
+
+    @pytest.mark.asyncio
+    async def test_email_mismatch_logs_info_not_error(self, non_local_env):
+        # OIDs match, emails differ — logs INFO, not WARNING or ERROR, no 401.
+        svc = self._make_jwt_svc(oid="oid-123", email="jwt@example.com")
+        with patch("hmcts_azure_auth.dependencies.get_jwt_service", return_value=svc):
+            with patch("hmcts_azure_auth.dependencies.logger") as mock_logger:
+                user = await get_current_user_base(
+                    x_ms_client_principal=_easy_auth_header("oid-123", "easyauth@example.com"),
+                    authorization="Bearer test-token",
+                )
+        assert user is not None
+        info_msgs = [call[0][0] for call in mock_logger.info.call_args_list]
+        assert any("email" in m.lower() for m in info_msgs)
+        mock_logger.error.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_missing_jwt_oid_falls_back_to_easy_auth_oid(self, non_local_env):
+        # JWT with no oid claim — cross-check is skipped, Easy Auth OID is used.
+        svc = MagicMock()
+        svc.enabled = True
+        svc.strict_mode = True
+        svc.verify_jwt_token = AsyncMock(return_value={"email": "user@example.com"})
+        svc.extract_user_info_from_jwt.return_value = {
+            "azure_user_id": "",
+            "email": "user@example.com",
+            "name": "",
+            "upn": "",
+            "roles": [],
+        }
+        with patch("hmcts_azure_auth.dependencies.get_jwt_service", return_value=svc):
+            user = await get_current_user_base(
+                x_ms_client_principal=_easy_auth_header("oid-from-easy-auth"),
+                authorization="Bearer test-token",
+            )
+        assert user.user_id == "oid-from-easy-auth"
+
+    @pytest.mark.asyncio
+    async def test_missing_easy_auth_oid_skips_cross_check(self, non_local_env):
+        # Easy Auth header with empty userId — cross-check condition skipped; JWT OID is used.
+        payload = {
+            "userId": "",
+            "claims": [
+                {"typ": "email", "val": "user@example.com"},
+                {"typ": "name", "val": "Test User"},
+            ],
+        }
+        header = base64.b64encode(json.dumps(payload).encode()).decode()
+
+        svc = self._make_jwt_svc(oid="oid-from-jwt", strict=True)
+        with patch("hmcts_azure_auth.dependencies.get_jwt_service", return_value=svc):
+            user = await get_current_user_base(
+                x_ms_client_principal=header,
+                authorization="Bearer test-token",
+            )
+        assert user.user_id == "oid-from-jwt"
+
+    @pytest.mark.asyncio
+    async def test_no_jwt_in_strict_mode_raises_401(self, non_local_env):
+        svc = MagicMock()
+        svc.strict_mode = True
+        with patch("hmcts_azure_auth.dependencies.get_jwt_service", return_value=svc):
+            with pytest.raises(HTTPException) as exc_info:
+                await get_current_user_base(
+                    x_ms_client_principal=_easy_auth_header("oid-123"),
+                    authorization=None,
+                )
+        assert exc_info.value.status_code == 401
+        assert "jwt" in exc_info.value.detail.lower() or "token" in exc_info.value.detail.lower()
+
+    @pytest.mark.asyncio
+    async def test_invalid_json_in_easy_auth_header_raises_401(self, non_local_env):
+        # Valid base64, but decodes to non-JSON.
+        bad_header = base64.b64encode(b"not-valid-json{{{").decode()
+        with pytest.raises(HTTPException) as exc_info:
+            await get_current_user_base(
+                x_ms_client_principal=bad_header,
+                authorization=None,
+            )
+        assert exc_info.value.status_code == 401
+
+    @pytest.mark.asyncio
+    async def test_invalid_base64_in_easy_auth_header_raises_401(self, non_local_env):
+        # Garbage string — base64 decoding produces non-JSON bytes.
+        with pytest.raises(HTTPException) as exc_info:
+            await get_current_user_base(
+                x_ms_client_principal="AAAA",  # decodes to null bytes, not valid JSON
+                authorization=None,
+            )
+        assert exc_info.value.status_code == 401
 
 
 # ---------------------------------------------------------------------------
@@ -126,7 +308,7 @@ class TestBuildCurrentUserDep:
         mock_svc.strict_mode = False
         mock_svc.verify_jwt_token = AsyncMock(return_value=None)
 
-        with patch("hmcts_azure_auth.dependencies.jwt_verification_service", mock_svc):
+        with patch("hmcts_azure_auth.dependencies.get_jwt_service", return_value=mock_svc):
             dep = build_current_user_dep(_resolver)
             app = FastAPI()
 

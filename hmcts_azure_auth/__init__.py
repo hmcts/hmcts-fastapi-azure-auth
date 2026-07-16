@@ -11,18 +11,27 @@ Quick-start
 
 2. Create your user dependency:
 
+    from dataclasses import dataclass
+    from typing import Any
     from hmcts_azure_auth import build_current_user_dep, get_role
     from app.database.postgres_models import User
     from sqlmodel import Session, select
 
-    def _resolve_user(azure_user_id: str, email: str, roles: list[str]) -> User:
+    @dataclass
+    class AuthenticatedUser:
+        db_user: User
+        app_roles: list[str]
+
+        def __getattr__(self, name: str) -> Any:
+            return getattr(self.db_user, name)
+
+    def _resolve_user(azure_user_id: str, email: str, roles: list[str]) -> AuthenticatedUser:
         with Session(get_engine()) as session:
             user = session.exec(select(User).where(User.azure_user_id == azure_user_id)).first()
             if not user:
                 user = User(email=email, azure_user_id=azure_user_id)
                 session.add(user); session.commit(); session.refresh(user)
-            user.__dict__["app_roles"] = roles
-            return user
+            return AuthenticatedUser(db_user=user, app_roles=roles)
 
     get_current_user = build_current_user_dep(_resolve_user)
 
@@ -52,7 +61,7 @@ from hmcts_azure_auth.dependencies import (
     get_current_user_base,
 )
 from hmcts_azure_auth.easy_auth import parse_easy_auth_header
-from hmcts_azure_auth.jwt import JWTVerificationService, jwt_verification_service
+from hmcts_azure_auth.jwt import JWTVerificationService, get_jwt_service
 from hmcts_azure_auth.models import (
     AuthenticatedIdentity,
     AuthSettings,
@@ -64,10 +73,11 @@ from hmcts_azure_auth.roles import (
     get_role,
     get_valid_roles,
     has_any_role,
+    validate_approles_config,
 )
 from hmcts_azure_auth.utils import emails_match, sanitize_for_log
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 
 __all__ = [
     # Audit
@@ -82,7 +92,7 @@ __all__ = [
     "parse_easy_auth_header",
     # JWT
     "JWTVerificationService",
-    "jwt_verification_service",
+    "get_jwt_service",
     # Models / Settings
     "AuthenticatedIdentity",
     "AuthSettings",
@@ -93,6 +103,7 @@ __all__ = [
     "get_role",
     "get_valid_roles",
     "has_any_role",
+    "validate_approles_config",
     # Utils
     "emails_match",
     "sanitize_for_log",

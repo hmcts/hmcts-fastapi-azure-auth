@@ -61,6 +61,7 @@ class AuditEvent(BaseModel):
     required_roles: list[str] = []
     resource: str | None = None
     detail: dict | None = None
+    client_ip: str | None = None
     timestamp: datetime = Field(default_factory=lambda: datetime.now(UTC))
 
 

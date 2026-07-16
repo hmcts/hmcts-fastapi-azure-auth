@@ -25,9 +25,10 @@ def parse_easy_auth_header(x_ms_client_principal: str) -> AuthenticatedIdentity:
         decoded = base64.b64decode(x_ms_client_principal).decode("utf-8")
         payload = json.loads(decoded)
     except (json.JSONDecodeError, base64.binascii.Error) as exc:
+        logger.debug("Easy Auth header parse failure: %s", exc)
         raise HTTPException(
             status_code=401,
-            detail=f"Invalid authentication header: {exc!s}",
+            detail="Invalid authentication header",
         ) from exc
 
     azure_user_id: str = payload.get("userId", "")
