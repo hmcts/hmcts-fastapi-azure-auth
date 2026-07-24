@@ -15,9 +15,25 @@ Provides Azure Easy Auth header parsing, RS256 JWT verification against Azure AD
 
 ## Installation
 
+This package is published to the HMCTS **`hmcts-lib`** Azure DevOps Artifacts feed
+(the same feed as the HMCTS Java libraries), not public PyPI.
+
 ```bash
-pip install hmcts-fastapi-azure-auth
+pip install hmcts-fastapi-azure-auth \
+  --index-url https://pkgs.dev.azure.com/hmcts/Artifacts/_packaging/hmcts-lib/pypi/simple/
 ```
+
+The feed is private, so pip must authenticate. The recommended way is the Azure
+Artifacts credential provider:
+
+```bash
+pip install keyring artifacts-keyring   # one-time, provides interactive auth
+```
+
+Alternatively, supply a PAT/credentials via the index URL or `~/.netrc`. In CI, use
+the `AZURE_DEVOPS_ARTIFACT_USERNAME` / `AZURE_DEVOPS_ARTIFACT_TOKEN` credentials (the
+same ones used to publish). For a persistent setup, add the feed as an
+`[[tool.uv.index]]` / `extra-index-url` in your project config.
 
 ## Quick start
 
