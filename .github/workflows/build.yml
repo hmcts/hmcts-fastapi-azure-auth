@@ -101,11 +101,19 @@ jobs:
         env:
           RAW_VERSION: ${{ needs.artefact-version.outputs.version }}
         run: |
-          # artefact-version-action emits e.g. "0.2.0-abc1234" (draft). Normalise
-          # to a PEP 440 local version ("0.2.0+abc1234") so the Python package and
-          # the Azure Artifacts PyPI feed accept it; a release version ("0.2.0")
-          # is unchanged.
-          VERSION="$(printf '%s' "$RAW_VERSION" | sed 's/-/+/')"
+          # Draft builds (push to main) get a PEP 440 developmental release,
+          # "<base>.dev<run_number>" (e.g. 0.2.0.dev47) — dot-separated, no "+"
+          # local segment, and it sorts correctly (each push a higher devN). A
+          # published release uses the clean release version as-is.
+          # NOTE: the commit SHA is intentionally NOT in the version — a hex SHA
+          # can't follow a "." (PEP 440 release/dev segments are numeric); it is
+          # traceable via the workflow run instead.
+          if [ "${{ github.event_name }}" = "release" ]; then
+            VERSION="$RAW_VERSION"
+          else
+            BASE="${RAW_VERSION%%-*}"
+            VERSION="${BASE}.dev${{ github.run_number }}"
+          fi
           echo "Publishing hmcts-fastapi-azure-auth version: $VERSION"
           sed -i.bak -E "s/^version = \".*\"/version = \"$VERSION\"/" pyproject.toml
           rm -f pyproject.toml.bak
