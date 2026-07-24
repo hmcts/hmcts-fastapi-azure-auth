@@ -8,7 +8,19 @@ version = "0.2.0"
 description = "FastAPI Azure AD authentication and RBAC library for HMCTS applications"
 readme = "README.md"
 requires-python = ">=3.11"
-license = { text = "MIT" }
+license = "MIT"
+authors = [{ name = "HMCTS" }]
+maintainers = [{ name = "HMCTS" }]
+classifiers = [
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Framework :: FastAPI",
+    "Intended Audience :: Developers",
+    "Operating System :: OS Independent",
+]
 dependencies = [
     "fastapi>=0.115.0",
     "pyjwt>=2.9.0",
@@ -17,6 +29,10 @@ dependencies = [
     "pydantic-settings>=2.0.0",
 ]
 
+[project.urls]
+Homepage = "https://github.com/hmcts/hmcts-fastapi-azure-auth"
+Repository = "https://github.com/hmcts/hmcts-fastapi-azure-auth"
+
 [project.optional-dependencies]
 dev = [
     "pytest>=8.0.0",
@@ -24,6 +40,8 @@ dev = [
     "httpx>=0.27.0",
     "pytest-mock>=3.14.0",
     "hatch>=1.14.0",
+    "ruff>=0.8.0",
+    "pyright>=1.1.380",
 ]
 
 [tool.hatch.build.targets.wheel]
@@ -39,3 +57,9 @@ target-version = "py311"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP"]
+ignore = [
+    # AuditEventType(str, Enum) is a deliberate public contract (JSON-serialisable
+    # string values for consuming apps' DB columns) — switching to enum.StrEnum
+    # changes str()/repr() behaviour and isn't worth the compatibility risk here.
+    "UP042",
+]

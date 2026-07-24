@@ -1,6 +1,6 @@
 """Tests for hmcts_azure_auth.jwt — JWTVerificationService."""
 
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 from fastapi import HTTPException
@@ -84,6 +84,31 @@ class TestVerifyJWTToken:
             result = await svc.verify_jwt_token("valid.jwt.token")
 
         assert result == decoded_payload
+
+    async def test_success_log_does_not_contain_email(self, monkeypatch):
+        # Regression test: the success-path INFO log must identify the user by
+        # the non-PII Azure AD oid, never by email/preferred_username.
+        monkeypatch.setenv("AZURE_AD_TENANT_ID", "tenant")
+        monkeypatch.setenv("AZURE_AD_CLIENT_ID", "client")
+        monkeypatch.setenv("JWT_ENABLE_VERIFICATION", "true")
+        svc = JWTVerificationService()
+        mock_jwks = MagicMock()
+        mock_jwks.get_signing_key_from_jwt.return_value = MagicMock(key=MagicMock())
+        svc.jwks_client = mock_jwks
+
+        decoded_payload = {
+            "oid": "user-oid-123",
+            "email": "secret@example.com",
+            "roles": ["Judge"],
+        }
+        with patch("hmcts_azure_auth.jwt.jwt.decode", return_value=decoded_payload):
+            with patch("hmcts_azure_auth.jwt.logger") as mock_logger:
+                result = await svc.verify_jwt_token("valid.jwt.token")
+
+        assert result == decoded_payload
+        for call in mock_logger.info.call_args_list:
+            assert "secret@example.com" not in call[0]
+        assert any("user-oid-123" in call[0] for call in mock_logger.info.call_args_list)
 
     async def test_raises_401_on_expired_token_strict(self, monkeypatch):
         import jwt as _jwt

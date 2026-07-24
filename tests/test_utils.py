@@ -1,7 +1,5 @@
 """Tests for hmcts_azure_auth.utils."""
 
-import pytest
-
 from hmcts_azure_auth.utils import emails_match, sanitize_for_log
 
 

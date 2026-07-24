@@ -30,9 +30,9 @@ Usage in a consuming app:
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from datetime import UTC, datetime
 from enum import Enum
-from typing import Callable
 
 from pydantic import BaseModel, Field
 

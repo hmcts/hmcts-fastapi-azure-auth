@@ -1,7 +1,5 @@
 """Shared fixtures and cache-clearing for the test suite."""
 
-import os
-
 import pytest
 
 from hmcts_azure_auth.models import get_auth_settings

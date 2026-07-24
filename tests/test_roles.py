@@ -1,9 +1,6 @@
 """Tests for hmcts_azure_auth.roles."""
 
 import json
-import os
-
-import pytest
 
 from hmcts_azure_auth.roles import (
     DEFAULT_APP_ROLES,

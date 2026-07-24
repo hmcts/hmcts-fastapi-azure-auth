@@ -2,8 +2,6 @@
 
 from datetime import UTC, datetime
 
-import pytest
-
 from hmcts_azure_auth.audit import AuditEvent, AuditEventType
 
 

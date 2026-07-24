@@ -24,17 +24,22 @@ pip install hmcts-fastapi-azure-auth
 ```python
 from hmcts_azure_auth import AuthSettings, build_current_user_dep, get_allowlisted_user, get_role
 
+
 class Settings(AuthSettings):
     MY_EXTRA_SETTING: str = "default"
+
 
 def _resolve_user(azure_user_id: str, email: str, roles: list[str]):
     # DB lookup / create — return whatever user object your app needs
     ...
 
+
 get_current_user = build_current_user_dep(_resolve_user)
+
 
 def get_allowlisted_user_app(required_roles_all=None, required_roles_any=None, audit_writer=None):
     from hmcts_azure_auth import get_allowlisted_user as _lib
+
     return _lib(
         required_roles_all=required_roles_all,
         required_roles_any=required_roles_any,
@@ -42,9 +47,9 @@ def get_allowlisted_user_app(required_roles_all=None, required_roles_any=None, a
         current_user_dep=get_current_user,
     )
 
+
 @router.get("/documents")
-async def list_documents(user=Depends(get_allowlisted_user_app(required_roles_any=[get_role("Judge")]))):
-    ...
+async def list_documents(user=Depends(get_allowlisted_user_app(required_roles_any=[get_role("Judge")]))): ...
 ```
 
 ## Required environment variables
@@ -56,3 +61,39 @@ async def list_documents(user=Depends(get_allowlisted_user_app(required_roles_an
 | `JWT_ENABLE_VERIFICATION` | Enable JWT signature verification (default: `true`) |
 | `JWT_VERIFICATION_STRICT` | Treat verification failures as 401 (default: `true`) |
 | `AUTH_APPROLES` | JSON dict overriding default app roles (optional) |
+
+## Security
+
+### Easy Auth header trust — deployment requirement
+
+`parse_easy_auth_header()` decodes and trusts the `X-Ms-Client-Principal` header that
+**Azure App Service Easy Auth** injects after authenticating a request — the library has
+no way to independently verify that this header was actually set by Easy Auth rather
+than by the caller.
+
+**The consuming application MUST be reachable only via the Easy Auth front door.** If the
+app is directly reachable — e.g. its origin is exposed without going through Easy Auth,
+or an internal network path bypasses it — a caller can forge an `X-Ms-Client-Principal`
+header to **impersonate any user and any set of roles**. This is not a bug in the
+library; it is an inherent property of how Easy Auth works, and it is the deploying
+application's responsibility to ensure Easy Auth cannot be bypassed (e.g. via network
+restrictions, access restrictions on the App Service, or a WAF/front door that strips
+client-supplied `X-Ms-*` headers before Easy Auth re-adds them).
+
+### JWT verification settings
+
+Keep `JWT_ENABLE_VERIFICATION=true` and `JWT_VERIFICATION_STRICT=true` in every deployed
+environment — these are the safe defaults and should not be overridden in production.
+
+- `JWT_VERIFICATION_STRICT=false` is intended for **local/dev only**: on an invalid or
+  expired token it returns `None` (falling back to Easy Auth-only identity) instead of
+  raising a 401. Running with non-strict verification in a deployed environment weakens
+  the identity/role cross-check between Easy Auth and the JWT.
+
+### Local development bypass
+
+When `ENVIRONMENT=local`, `get_current_user_base()` short-circuits authentication
+entirely and returns a mock identity holding **every configured app role**. This is
+opt-in — the default (when `ENVIRONMENT` is unset) is `"production"`, which does not
+trigger the bypass — but it is critical that **`ENVIRONMENT=local` is never set in any
+deployed environment**, since doing so disables authentication and RBAC completely.
