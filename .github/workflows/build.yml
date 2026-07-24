@@ -101,11 +101,23 @@ jobs:
         env:
           RAW_VERSION: ${{ needs.artefact-version.outputs.version }}
         run: |
-          # artefact-version-action emits e.g. "0.2.0-abc1234" (draft). Normalise
-          # to a PEP 440 local version ("0.2.0+abc1234") so the Python package and
-          # the Azure Artifacts PyPI feed accept it; a release version ("0.2.0")
-          # is unchanged.
-          VERSION="$(printf '%s' "$RAW_VERSION" | sed 's/-/+/')"
+          # Draft builds (push to main) get a PEP 440 dev release + local SHA,
+          # "<base>.dev<run_number>+<sha>" (e.g. 0.2.0.dev47+46dfd2f) — the same
+          # form setuptools-scm / from-source builds use. The .dev<n> gives
+          # correct ordering across drafts; the +<sha> is the commit (a hex SHA
+          # is only PEP 440-legal in the "+" local segment). A published release
+          # uses the clean release version as-is (no +local).
+          if [ "${{ github.event_name }}" = "release" ]; then
+            VERSION="$RAW_VERSION"
+          else
+            BASE="${RAW_VERSION%%-*}"          # e.g. 0.2.0
+            SHA="${RAW_VERSION#*-}"            # e.g. 46dfd2f
+            if [ "$SHA" = "$RAW_VERSION" ]; then
+              VERSION="${BASE}.dev${{ github.run_number }}"          # no SHA in source version
+            else
+              VERSION="${BASE}.dev${{ github.run_number }}+${SHA}"
+            fi
+          fi
           echo "Publishing hmcts-fastapi-azure-auth version: $VERSION"
           sed -i.bak -E "s/^version = \".*\"/version = \"$VERSION\"/" pyproject.toml
           rm -f pyproject.toml.bak
