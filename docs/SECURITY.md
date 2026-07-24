@@ -10,14 +10,9 @@ patched separately.
 
 **Please do not open a public GitHub issue for security vulnerabilities.**
 
-Report suspected vulnerabilities using one of the following routes:
-
-1. **GitHub private vulnerability reporting** (preferred): open a report via the
-   "Security" tab of this repository → "Report a vulnerability". This creates a
-   private advisory visible only to maintainers until a fix is published.
-2. **HMCTS security contact**: report to the HMCTS security team at
-   `security@hmcts.gov.uk` <!-- CONFIRM: replace with the HMCTS-nominated disclosure
-   address before this repo goes public — do not rely on this placeholder. -->
+Report suspected vulnerabilities via **GitHub private vulnerability reporting**: open a
+report from the "Security" tab of this repository → "Report a vulnerability". This
+creates a private advisory visible only to maintainers until a fix is published.
 
 Please include:
 
@@ -32,7 +27,7 @@ fix before any public disclosure.
 ## Scope Notes
 
 This library integrates with Azure App Service Easy Auth and Azure AD JWT verification.
-See the [Security](README.md#security) section of the README for architectural trust
+See the [Security](../README.md#security) section of the README for architectural trust
 assumptions (in particular, that `X-Ms-Client-Principal` is only trustworthy when the
 consuming application is reachable exclusively via the Easy Auth front door) — reports
 that rely on bypassing that documented deployment requirement are still welcome, but
