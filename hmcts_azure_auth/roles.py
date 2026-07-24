@@ -76,14 +76,10 @@ def validate_approles_config() -> None:
     try:
         roles = json.loads(settings.AUTH_APPROLES)
     except json.JSONDecodeError as exc:
-        raise ValueError(
-            f"AUTH_APPROLES is not valid JSON — fix or unset it. Error: {exc}"
-        ) from exc
+        raise ValueError(f"AUTH_APPROLES is not valid JSON — fix or unset it. Error: {exc}") from exc
 
     if not isinstance(roles, dict):
-        raise ValueError(
-            "AUTH_APPROLES must be a JSON object mapping role names to role values."
-        )
+        raise ValueError("AUTH_APPROLES must be a JSON object mapping role names to role values.")
 
     missing = [k for k in DEFAULT_APP_ROLES if k not in roles]
     if missing:

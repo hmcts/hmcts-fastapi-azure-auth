@@ -5,7 +5,8 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
-from typing import Annotated, Any, Callable
+from collections.abc import Callable
+from typing import Annotated, Any
 
 from fastapi import Depends, Header, HTTPException, Request
 
@@ -92,11 +93,11 @@ async def get_current_user_base(
                         )
 
                 if jwt_email and not emails_match(email, jwt_email):
+                    # Note the mismatch without logging the actual email addresses —
+                    # oid is cryptographically verified and non-PII.
                     logger.info(
-                        "Email differs between Easy Auth and JWT (identity verified): "
-                        "easy_auth=%s jwt=%s",
-                        sanitize_for_log(email),
-                        sanitize_for_log(jwt_email),
+                        "Email differs between Easy Auth and JWT (identity verified) for user oid=%s",
+                        sanitize_for_log(jwt_oid or azure_user_id),
                     )
 
                 # Prefer the JWT oid as it is cryptographically verified.
@@ -113,14 +114,11 @@ async def get_current_user_base(
                 raise
 
     elif get_jwt_service().strict_mode:
-        raise HTTPException(
-            status_code=401, detail="JWT token required in strict verification mode"
-        )
+        raise HTTPException(status_code=401, detail="JWT token required in strict verification mode")
 
     logger.info(
-        "Authentication validated — id=%s email=%s roles=%s",
+        "Authentication validated — id=%s roles=%s",
         sanitize_for_log(azure_user_id),
-        sanitize_for_log(email),
         [sanitize_for_log(r) for r in roles],
     )
     return AuthUser(
@@ -232,12 +230,11 @@ def get_allowlisted_user(
             event = AuditEvent(
                 event_type=AuditEventType.ACCESS_DENIED,
                 user_id=sanitize_for_log(
-                    current_user.user_id if isinstance(current_user, AuthUser)
+                    current_user.user_id
+                    if isinstance(current_user, AuthUser)
                     else getattr(current_user, "azure_user_id", "unknown")
                 ),
-                email=sanitize_for_log(
-                    current_user.email if hasattr(current_user, "email") else "unknown"
-                ),
+                email=sanitize_for_log(current_user.email if hasattr(current_user, "email") else "unknown"),
                 held_roles=safe_roles,
                 required_roles=[sanitize_for_log(r) for r in required],
                 resource=sanitize_for_log(resource),
@@ -248,13 +245,13 @@ def get_allowlisted_user(
             else:
                 await asyncio.to_thread(audit_writer, event)
 
-        for role in (required_roles_all or []):
+        for role in required_roles_all or []:
             if role not in roles:
                 logger.warning(
-                    "UNAUTHORISED_ACCESS_ATTEMPT user_id=%s email=%s "
-                    "held_roles=%s required_roles=%s resource=%s",
+                    "UNAUTHORISED_ACCESS_ATTEMPT user_id=%s email=%s held_roles=%s required_roles=%s resource=%s",
                     sanitize_for_log(
-                        current_user.user_id if isinstance(current_user, AuthUser)
+                        current_user.user_id
+                        if isinstance(current_user, AuthUser)
                         else getattr(current_user, "id", "unknown")
                     ),
                     sanitize_for_log(getattr(current_user, "email", "unknown")),
@@ -270,10 +267,10 @@ def get_allowlisted_user(
 
         if required_roles_any and not any(r in roles for r in required_roles_any):
             logger.warning(
-                "UNAUTHORISED_ACCESS_ATTEMPT user_id=%s email=%s "
-                "held_roles=%s required_roles=%s resource=%s",
+                "UNAUTHORISED_ACCESS_ATTEMPT user_id=%s email=%s held_roles=%s required_roles=%s resource=%s",
                 sanitize_for_log(
-                    current_user.user_id if isinstance(current_user, AuthUser)
+                    current_user.user_id
+                    if isinstance(current_user, AuthUser)
                     else getattr(current_user, "id", "unknown")
                 ),
                 sanitize_for_log(getattr(current_user, "email", "unknown")),
@@ -284,15 +281,16 @@ def get_allowlisted_user(
             await _maybe_write_audit(required_roles_any)
             raise HTTPException(
                 status_code=403,
-                detail=(
-                    f"Access denied. You must have one of the following roles: "
-                    f"{', '.join(required_roles_any)}."
-                ),
+                detail=(f"Access denied. You must have one of the following roles: {', '.join(required_roles_any)}."),
             )
 
         logger.info(
-            "Role check passed for user %s (roles=%s)",
-            sanitize_for_log(getattr(current_user, "email", "unknown")),
+            "Role check passed for user_id=%s (roles=%s)",
+            sanitize_for_log(
+                current_user.user_id
+                if isinstance(current_user, AuthUser)
+                else getattr(current_user, "azure_user_id", "unknown")
+            ),
             safe_roles,
         )
         return current_user

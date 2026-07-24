@@ -32,17 +32,13 @@ class JWTVerificationService:
         self.jwks_client: PyJWKClient | None = None
 
         if self.enabled and self.tenant_id:
-            jwks_url = (
-                f"https://login.microsoftonline.com/{self.tenant_id}/discovery/v2.0/keys"
-            )
+            jwks_url = f"https://login.microsoftonline.com/{self.tenant_id}/discovery/v2.0/keys"
             self.jwks_client = PyJWKClient(
                 jwks_url,
                 cache_keys=True,
                 max_cached_keys=16,
             )
-            logger.info(
-                "JWT verification service initialised — strict_mode=%s", self.strict_mode
-            )
+            logger.info("JWT verification service initialised — strict_mode=%s", self.strict_mode)
 
     async def verify_jwt_token(self, token: str) -> dict[str, Any] | None:  # noqa: C901, PLR0911, PLR0912
         """Verify token signature and standard claims.
@@ -70,9 +66,7 @@ class JWTVerificationService:
 
         try:
             loop = asyncio.get_running_loop()
-            signing_key = await loop.run_in_executor(
-                None, self.jwks_client.get_signing_key_from_jwt, token
-            )
+            signing_key = await loop.run_in_executor(None, self.jwks_client.get_signing_key_from_jwt, token)
             _client_id = self.client_id
             _tenant_id = self.tenant_id
             decoded = await loop.run_in_executor(
@@ -119,9 +113,11 @@ class JWTVerificationService:
                 raise HTTPException(status_code=401, detail="JWT verification failed") from exc
             return None
         else:
+            # Log the non-PII Azure AD object id (oid), never the email/UPN —
+            # this log is emitted at INFO and must not leak user PII.
             logger.info(
-                "JWT verification passed for user: %s",
-                decoded.get("email") or decoded.get("preferred_username", "unknown"),
+                "JWT verification passed for user oid=%s",
+                decoded.get("oid", "unknown"),
             )
             return decoded
 

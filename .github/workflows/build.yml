@@ -1,0 +1,75 @@
+name: Build
+
+# Validates the package builds and is well-formed on every PR; publishes to
+# PyPI via trusted publishing (OIDC) when a GitHub Release is published.
+#
+# NOTE: the `publish` job requires a PyPI "trusted publisher" to be configured
+# for this repository/workflow (https://docs.pypi.org/trusted-publishers/) —
+# no PyPI token is stored in this repo. Until that's configured, `publish`
+# will fail; it does not block the PR-time `build` job.
+
+on:
+  pull_request:
+    branches: [main]
+    # Skip docs/config-only changes — packaging is unaffected.
+    paths-ignore:
+      - '**/*.md'
+      - 'docs/**'
+      - 'LICENSE'
+      - '.gitignore'
+      - '.claude/**'
+  release:
+    types: [published]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build sdist + wheel
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v9.0.0
+        with:
+          enable-cache: true
+
+      - name: Build package
+        run: uv build
+
+      - name: Check package metadata (twine)
+        run: uvx twine check dist/*
+
+      - name: Upload build artefacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+  publish:
+    name: Publish to PyPI
+    needs: [build]
+    if: ${{ github.event_name == 'release' }}
+    runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      # Required for PyPI trusted publishing (OIDC) — no API token needed.
+      id-token: write
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v9.0.0
+        with:
+          enable-cache: true
+
+      - name: Build package
+        run: uv build
+
+      - name: Publish to PyPI
+        # Requires a PyPI trusted publisher configured for this repo + the
+        # `pypi` environment (https://docs.pypi.org/trusted-publishers/).
+        run: uv publish

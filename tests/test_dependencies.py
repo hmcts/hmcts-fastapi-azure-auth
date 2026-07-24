@@ -32,17 +32,12 @@ def _easy_auth_header(user_id: str = "oid-123", email: str = "user@example.com")
 # get_current_user_base — local dev path
 # ---------------------------------------------------------------------------
 
+
 class TestGetCurrentUserBaseLocalDev:
     """In local dev (ENVIRONMENT=local) the dependency returns a mock user."""
 
-    def test_returns_mock_user_in_local_dev(self):
-        app = FastAPI()
-
-        @app.get("/me")
-        async def me(user: AuthUser = get_current_user_base.__wrapped__ if hasattr(get_current_user_base, "__wrapped__") else None):
-            return {"email": user.email}
-
-        # Simpler: call via TestClient with ENVIRONMENT=local (default)
+    def test_returns_mock_user_in_local_dev(self, local_env):
+        # local_env sets ENVIRONMENT=local; the product defaults to production.
         app2 = FastAPI()
 
         @app2.get("/me")
@@ -50,7 +45,6 @@ class TestGetCurrentUserBaseLocalDev:
             return {"user_id": user.user_id, "email": user.email, "roles": user.roles}
 
         client = TestClient(app2, raise_server_exceptions=True)
-        # ENVIRONMENT defaults to "local" in tests
         resp = client.get("/me")
         assert resp.status_code == 200
         data = resp.json()
@@ -61,6 +55,7 @@ class TestGetCurrentUserBaseLocalDev:
 # ---------------------------------------------------------------------------
 # get_current_user_base — production path
 # ---------------------------------------------------------------------------
+
 
 class TestGetCurrentUserBaseProduction:
     def _make_app(self):
@@ -109,6 +104,7 @@ class TestGetCurrentUserBaseProduction:
 # ---------------------------------------------------------------------------
 # get_current_user_base — OID and identity cross-check
 # ---------------------------------------------------------------------------
+
 
 class TestGetCurrentUserBaseOIDValidation:
     """Tests for the OID / identity cross-check in get_current_user_base.
@@ -213,6 +209,21 @@ class TestGetCurrentUserBaseOIDValidation:
         mock_logger.error.assert_not_called()
 
     @pytest.mark.asyncio
+    async def test_no_info_log_contains_email_pii(self, non_local_env):
+        # Regression test: INFO-level auth logs must never include the user's
+        # actual email address (PII) — only non-PII identifiers like oid/roles.
+        svc = self._make_jwt_svc(oid="oid-123", email="jwt-secret@example.com")
+        with patch("hmcts_azure_auth.dependencies.get_jwt_service", return_value=svc):
+            with patch("hmcts_azure_auth.dependencies.logger") as mock_logger:
+                await get_current_user_base(
+                    x_ms_client_principal=_easy_auth_header("oid-123", "easyauth-secret@example.com"),
+                    authorization="Bearer test-token",
+                )
+        for call in mock_logger.info.call_args_list:
+            assert "jwt-secret@example.com" not in call[0]
+            assert "easyauth-secret@example.com" not in call[0]
+
+    @pytest.mark.asyncio
     async def test_missing_jwt_oid_falls_back_to_easy_auth_oid(self, non_local_env):
         # JWT with no oid claim — cross-check is skipped, Easy Auth OID is used.
         svc = MagicMock()
@@ -292,6 +303,7 @@ class TestGetCurrentUserBaseOIDValidation:
 # build_current_user_dep
 # ---------------------------------------------------------------------------
 
+
 class TestBuildCurrentUserDep:
     def test_resolver_is_called_with_auth_user_data(self, monkeypatch):
         monkeypatch.setenv("JWT_ENABLE_VERIFICATION", "false")
@@ -335,12 +347,14 @@ class TestBuildCurrentUserDep:
         # Just verify the dep is a coroutine function (FastAPI will await it)
         dep = build_current_user_dep(_async_resolver)
         import asyncio
+
         assert asyncio.iscoroutinefunction(dep)
 
 
 # ---------------------------------------------------------------------------
 # get_allowlisted_user
 # ---------------------------------------------------------------------------
+
 
 class TestGetAllowlistedUser:
     def _make_app_with_roles(self, required_roles_any=None, required_roles_all=None, audit_writer=None):
@@ -359,20 +373,20 @@ class TestGetAllowlistedUser:
 
         return app
 
-    def test_passes_when_no_roles_required(self):
+    def test_passes_when_no_roles_required(self, local_env):
         app = self._make_app_with_roles()
         client = TestClient(app, raise_server_exceptions=False)
         resp = client.get("/protected")
         assert resp.status_code == 200
 
-    def test_passes_when_user_has_required_role(self):
+    def test_passes_when_user_has_required_role(self, local_env):
         # local dev returns all default roles including Judge
         app = self._make_app_with_roles(required_roles_any=["Judge"])
         client = TestClient(app, raise_server_exceptions=False)
         resp = client.get("/protected")
         assert resp.status_code == 200
 
-    def test_passes_when_user_has_all_required_roles(self):
+    def test_passes_when_user_has_all_required_roles(self, local_env):
         app = self._make_app_with_roles(required_roles_all=["Judge", "Normal"])
         client = TestClient(app, raise_server_exceptions=False)
         resp = client.get("/protected")
@@ -434,3 +448,24 @@ class TestGetAllowlistedUser:
         resp = client.get("/protected")
         assert resp.status_code == 403
         assert len(captured) == 1
+
+    def test_role_check_passed_log_has_no_email_pii(self, non_local_env):
+        # Regression test: the "Role check passed" INFO log must identify the
+        # user by user_id, never by their actual email address (PII).
+        async def _user_dep():
+            return AuthUser(user_id="oid-123", name="", email="secret@example.com", roles=["Judge"])
+
+        dep = get_allowlisted_user(required_roles_any=["Judge"], current_user_dep=_user_dep)
+        app = FastAPI()
+
+        @app.get("/protected")
+        async def protected(user=__import__("fastapi").Depends(dep)):
+            return {}
+
+        client = TestClient(app, raise_server_exceptions=False)
+        with patch("hmcts_azure_auth.dependencies.logger") as mock_logger:
+            resp = client.get("/protected")
+
+        assert resp.status_code == 200
+        for call in mock_logger.info.call_args_list:
+            assert "secret@example.com" not in call[0]
