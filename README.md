@@ -97,3 +97,36 @@ entirely and returns a mock identity holding **every configured app role**. This
 opt-in — the default (when `ENVIRONMENT` is unset) is `"production"`, which does not
 trigger the bypass — but it is critical that **`ENVIRONMENT=local` is never set in any
 deployed environment**, since doing so disables authentication and RBAC completely.
+
+## Development
+
+This repo uses [uv](https://docs.astral.sh/uv/) and enforces linting, formatting, and
+secret scanning via [pre-commit](https://pre-commit.com/).
+
+```bash
+# Install dependencies, including dev tools (ruff, pyright)
+uv sync --extra dev
+
+# Install the git hooks (run once per clone).
+# Requires `gitleaks` on your PATH (e.g. `brew install gitleaks`).
+pre-commit install
+```
+
+The hooks run on every commit — **ruff** (lint + format), basic file hygiene, and
+**gitleaks** (secret scanning; this is a public repo). Run them across the whole tree
+at any time with `pre-commit run --all-files`.
+
+Before pushing, verify locally (this mirrors CI):
+
+```bash
+uv run pytest                  # tests
+uv run ruff check .            # lint (blocking)
+uv run ruff format --check .   # formatting (blocking)
+uv build                       # packaging must stay valid
+```
+
+Behavioural changes ship with a test. For security-critical code (JWT verification,
+RBAC) prefer exercising the real path over mocks — see `tests/test_jwt.py` for the
+pattern (a real RS256 keypair signs real tokens; only the external JWKS fetch is
+stubbed, so signature/algorithm-pinning/audience/issuer/expiry are all verified for
+real). See `CLAUDE.md` for the full contributor invariants.
