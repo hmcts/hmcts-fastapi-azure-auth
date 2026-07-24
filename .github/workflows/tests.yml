@@ -4,6 +4,13 @@ on:
   pull_request:
     branches:
       - main
+    # Skip docs/config-only changes — no code to test.
+    paths-ignore:
+      - '**/*.md'
+      - 'docs/**'
+      - 'LICENSE'
+      - '.gitignore'
+      - '.claude/**'
   workflow_dispatch:
 
 permissions:

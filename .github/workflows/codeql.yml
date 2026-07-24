@@ -4,6 +4,13 @@ on:
   pull_request:
     branches:
       - main
+    # Skip docs/config-only changes — no code to analyse.
+    paths-ignore:
+      - '**/*.md'
+      - 'docs/**'
+      - 'LICENSE'
+      - '.gitignore'
+      - '.claude/**'
 
   schedule:
     - cron: '36 5 * * 4'

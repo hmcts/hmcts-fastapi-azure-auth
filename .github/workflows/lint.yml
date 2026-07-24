@@ -8,6 +8,13 @@ name: Lint
 on:
   pull_request:
     branches: [main]
+    # Skip docs/config-only changes — nothing to lint/type-check.
+    paths-ignore:
+      - '**/*.md'
+      - 'docs/**'
+      - 'LICENSE'
+      - '.gitignore'
+      - '.claude/**'
   workflow_dispatch:
 
 permissions:

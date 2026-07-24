@@ -11,6 +11,13 @@ name: Build
 on:
   pull_request:
     branches: [main]
+    # Skip docs/config-only changes — packaging is unaffected.
+    paths-ignore:
+      - '**/*.md'
+      - 'docs/**'
+      - 'LICENSE'
+      - '.gitignore'
+      - '.claude/**'
   release:
     types: [published]
   workflow_dispatch:
