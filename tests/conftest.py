@@ -22,3 +22,14 @@ def non_local_env(monkeypatch):
     monkeypatch.setenv("ENVIRONMENT", "staging")
     monkeypatch.setenv("AZURE_AD_TENANT_ID", "test-tenant-id")
     monkeypatch.setenv("AZURE_AD_CLIENT_ID", "test-client-id")
+
+
+@pytest.fixture()
+def local_env(monkeypatch):
+    """Force ENVIRONMENT=local to exercise the local-dev bypass.
+
+    The library defaults ENVIRONMENT to 'production' (fail-closed), so tests of
+    the local-dev short-circuit must set it explicitly — they cannot rely on a
+    default. Setting it here, never lowering the product default, is deliberate.
+    """
+    monkeypatch.setenv("ENVIRONMENT", "local")

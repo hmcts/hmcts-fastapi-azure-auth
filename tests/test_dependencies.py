@@ -36,8 +36,8 @@ def _easy_auth_header(user_id: str = "oid-123", email: str = "user@example.com")
 class TestGetCurrentUserBaseLocalDev:
     """In local dev (ENVIRONMENT=local) the dependency returns a mock user."""
 
-    def test_returns_mock_user_in_local_dev(self):
-        # Call via TestClient with ENVIRONMENT=local (default)
+    def test_returns_mock_user_in_local_dev(self, local_env):
+        # local_env sets ENVIRONMENT=local; the product defaults to production.
         app2 = FastAPI()
 
         @app2.get("/me")
@@ -45,7 +45,6 @@ class TestGetCurrentUserBaseLocalDev:
             return {"user_id": user.user_id, "email": user.email, "roles": user.roles}
 
         client = TestClient(app2, raise_server_exceptions=True)
-        # ENVIRONMENT defaults to "local" in tests
         resp = client.get("/me")
         assert resp.status_code == 200
         data = resp.json()
@@ -374,20 +373,20 @@ class TestGetAllowlistedUser:
 
         return app
 
-    def test_passes_when_no_roles_required(self):
+    def test_passes_when_no_roles_required(self, local_env):
         app = self._make_app_with_roles()
         client = TestClient(app, raise_server_exceptions=False)
         resp = client.get("/protected")
         assert resp.status_code == 200
 
-    def test_passes_when_user_has_required_role(self):
+    def test_passes_when_user_has_required_role(self, local_env):
         # local dev returns all default roles including Judge
         app = self._make_app_with_roles(required_roles_any=["Judge"])
         client = TestClient(app, raise_server_exceptions=False)
         resp = client.get("/protected")
         assert resp.status_code == 200
 
-    def test_passes_when_user_has_all_required_roles(self):
+    def test_passes_when_user_has_all_required_roles(self, local_env):
         app = self._make_app_with_roles(required_roles_all=["Judge", "Normal"])
         client = TestClient(app, raise_server_exceptions=False)
         resp = client.get("/protected")

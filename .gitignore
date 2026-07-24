@@ -12,3 +12,6 @@ build/
 .ruff_cache/
 .mypy_cache/
 *.so
+
+# Claude Code agent worktrees
+.claude/worktrees/
