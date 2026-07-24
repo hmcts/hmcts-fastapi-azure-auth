@@ -1,12 +1,15 @@
 name: Build
 
-# Validates the package builds and is well-formed on every PR; publishes to
-# PyPI via trusted publishing (OIDC) when a GitHub Release is published.
+# Validates the package builds on every PR, and publishes the wheel/sdist to the
+# shared HMCTS Azure DevOps Artifacts feed (hmcts-lib) — the same feed the Java
+# libraries publish to (mirrors api-cp-caseadmin-case-urn-mapper's ci-draft /
+# ci-released Gradle publish, but for a Python artefact via twine).
 #
-# NOTE: the `publish` job requires a PyPI "trusted publisher" to be configured
-# for this repository/workflow (https://docs.pypi.org/trusted-publishers/) —
-# no PyPI token is stored in this repo. Until that's configured, `publish`
-# will fail; it does not block the PR-time `build` job.
+#   push to main        -> draft candidate version   (artefact-version draft)
+#   published release   -> release version           (artefact-version release)
+#
+# Auth is basic auth to Azure Artifacts using the org secrets
+# AZURE_DEVOPS_ARTIFACT_USERNAME / AZURE_DEVOPS_ARTIFACT_TOKEN (same as Gradle).
 
 on:
   pull_request:
@@ -18,6 +21,8 @@ on:
       - 'LICENSE'
       - '.gitignore'
       - '.claude/**'
+  push:
+    branches: [main]
   release:
     types: [published]
   workflow_dispatch:
@@ -49,15 +54,41 @@ jobs:
           name: dist
           path: dist/
 
-  publish:
-    name: Publish to PyPI
-    needs: [build]
-    if: ${{ github.event_name == 'release' }}
+  # Compute the artefact version the HMCTS-standard way (same action the Java
+  # libraries use): a draft version on push, a release version on a Release.
+  artefact-version:
+    name: Artefact Version
+    if: github.event_name == 'push' || github.event_name == 'release'
     runs-on: ubuntu-latest
-    environment: pypi
-    permissions:
-      # Required for PyPI trusted publishing (OIDC) — no API token needed.
-      id-token: write
+    outputs:
+      version: ${{ steps.pick.outputs.version }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0 # full history for accurate versioning
+
+      - name: Generate artefact version
+        id: artefact
+        uses: hmcts/artefact-version-action@v1
+        with:
+          release: ${{ github.event_name == 'release' }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Select draft/release version
+        id: pick
+        run: |
+          if [ "${{ github.event_name }}" = "release" ]; then
+            echo "version=${{ steps.artefact.outputs.release_version }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "version=${{ steps.artefact.outputs.draft_version }}" >> "$GITHUB_OUTPUT"
+          fi
+
+  publish:
+    name: Publish to Azure Artifacts (hmcts-lib)
+    needs: [build, artefact-version]
+    if: github.event_name == 'push' || github.event_name == 'release'
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
 
@@ -66,10 +97,24 @@ jobs:
         with:
           enable-cache: true
 
-      - name: Build package
-        run: uv build
+      - name: Set the artefact version and build
+        env:
+          RAW_VERSION: ${{ needs.artefact-version.outputs.version }}
+        run: |
+          # artefact-version-action emits e.g. "0.2.0-abc1234" (draft). Normalise
+          # to a PEP 440 local version ("0.2.0+abc1234") so the Python package and
+          # the Azure Artifacts PyPI feed accept it; a release version ("0.2.0")
+          # is unchanged.
+          VERSION="$(printf '%s' "$RAW_VERSION" | sed 's/-/+/')"
+          echo "Publishing hmcts-fastapi-azure-auth version: $VERSION"
+          sed -i.bak -E "s/^version = \".*\"/version = \"$VERSION\"/" pyproject.toml
+          rm -f pyproject.toml.bak
+          uv build
 
-      - name: Publish to PyPI
-        # Requires a PyPI trusted publisher configured for this repo + the
-        # `pypi` environment (https://docs.pypi.org/trusted-publishers/).
-        run: uv publish
+      - name: Publish to the hmcts-lib PyPI feed
+        env:
+          # Same Azure DevOps Artifacts feed + credentials as the Gradle publish.
+          TWINE_USERNAME: ${{ secrets.AZURE_DEVOPS_ARTIFACT_USERNAME }}
+          TWINE_PASSWORD: ${{ secrets.AZURE_DEVOPS_ARTIFACT_TOKEN }}
+          TWINE_REPOSITORY_URL: https://pkgs.dev.azure.com/hmcts/Artifacts/_packaging/hmcts-lib/pypi/upload/
+        run: uvx twine upload --non-interactive dist/*
